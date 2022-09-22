@@ -292,9 +292,11 @@ class AutoencoderKL(pl.LightningModule):
                  image_key="image",
                  colorize_nlabels=None,
                  monitor=None,
+                 plot_mask_im_class=None
                  ):
         super().__init__()
         self.image_key = image_key
+        self.plot_mask_im_class = plot_mask_im_class
         self.encoder = Encoder(**ddconfig)
         self.decoder = Decoder(**ddconfig)
         self.loss = instantiate_from_config(lossconfig)
@@ -406,20 +408,34 @@ class AutoencoderKL(pl.LightningModule):
             xrec, posterior = self(x)
             if x.shape[1] > 3:
                 # colorize with random projection
-                assert xrec.shape[1] > 3
-                x = self.to_rgb(x)
-                xrec = self.to_rgb(xrec)
+                if xrec.shape[1] == 1:
+                    log["samples"] = self.decode(torch.randn_like(posterior.sample()))
+                    log["reconstructions"] = xrec
+                    log["inputs"] = x
+                    return log
+                else:
+                    xrec = self.to_rgb(xrec)
+                    x = self.to_rgb(x)
             log["samples"] = self.decode(torch.randn_like(posterior.sample()))
             log["reconstructions"] = xrec
         log["inputs"] = x
         return log
 
-    def to_rgb(self, x):
-        assert self.image_key == "segmentation"
-        if not hasattr(self, "colorize"):
-            self.register_buffer("colorize", torch.randn(3, x.shape[1], 1, 1).to(x))
-        x = F.conv2d(x, weight=self.colorize)
-        x = 2.*(x-x.min())/(x.max()-x.min()) - 1.
+    def to_rgb(self, x, mask_mode=False):
+        if self.image_key != "segmentation":
+            if mask_mode:
+                if not hasattr(self, "colorize"):
+                    self.register_buffer("colorize", torch.randn(3, x.shape[1], 1, 1).to(x))
+                x = F.conv2d(x, weight=self.colorize)
+                x = 2. * (x - x.min()) / (x.max() - x.min()) - 1.
+            else:
+                return x
+        else:
+            assert self.image_key == "segmentation"
+            if not hasattr(self, "colorize"):
+                self.register_buffer("colorize", torch.randn(3, x.shape[1], 1, 1).to(x))
+            x = F.conv2d(x, weight=self.colorize)
+            x = 2.*(x-x.min())/(x.max()-x.min()) - 1.
         return x
 
 

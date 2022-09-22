@@ -58,14 +58,14 @@ def get_parser(**parser_kwargs):
         metavar="base_config.yaml",
         help="paths to base configs. Loaded from left-to-right. "
              "Parameters can be overwritten or added with command-line options of the form `--key value`.",
-        default=list(),
+        default=['configs/autoencoder/autoencoder_kl_55x110x3_nuimages.yaml'],
     )
     parser.add_argument(
         "-t",
         "--train",
         type=str2bool,
         const=True,
-        default=False,
+        default=True,
         nargs="?",
         help="train",
     )
@@ -109,7 +109,7 @@ def get_parser(**parser_kwargs):
         "-l",
         "--logdir",
         type=str,
-        default="logs",
+        default="/data/pcicales/latent_diffusion_segmentation/autoencoder_nuimage",
         help="directory for logging dat shit",
     )
     parser.add_argument(
@@ -319,8 +319,12 @@ class ImageLogger(Callback):
 
     @rank_zero_only
     def log_local(self, save_dir, split, images,
-                  global_step, current_epoch, batch_idx):
+                  global_step, current_epoch, batch_idx, plot_mask_im_class):
         root = os.path.join(save_dir, "images", split)
+        if (images['inputs'].shape[1] > 3) and (images['reconstructions'].shape[1] == 1):
+
+            grid_gt = torchvision.utils.make_grid(images['inputs'][:, :-1, ...], nrow=4)
+
         for k in images:
             grid = torchvision.utils.make_grid(images[k], nrow=4)
             if self.rescale:
@@ -361,7 +365,7 @@ class ImageLogger(Callback):
                         images[k] = torch.clamp(images[k], -1., 1.)
 
             self.log_local(pl_module.logger.save_dir, split, images,
-                           pl_module.global_step, pl_module.current_epoch, batch_idx)
+                           pl_module.global_step, pl_module.current_epoch, batch_idx, pl_module.plot_mask_im_class)
 
             logger_log_images = self.logger_log_images.get(logger, lambda *args, **kwargs: None)
             logger_log_images(pl_module, images, pl_module.global_step, split)
@@ -583,7 +587,7 @@ if __name__ == "__main__":
         if "modelcheckpoint" in lightning_config:
             modelckpt_cfg = lightning_config.modelcheckpoint
         else:
-            modelckpt_cfg =  OmegaConf.create()
+            modelckpt_cfg = OmegaConf.create()
         modelckpt_cfg = OmegaConf.merge(default_modelckpt_cfg, modelckpt_cfg)
         print(f"Merged modelckpt-cfg: \n{modelckpt_cfg}")
         if version.parse(pl.__version__) < version.parse('1.4.0'):

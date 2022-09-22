@@ -23,6 +23,10 @@ def synset2idx(path_to_yaml="data/index_synset.yaml"):
     return dict((v,k) for k,v in di2s.items())
 
 
+###################################
+########### IMAGENET ##############
+###################################
+
 class ImageNetBase(Dataset):
     def __init__(self, config=None):
         self.config = config or OmegaConf.create()
@@ -266,7 +270,6 @@ class ImageNetValidation(ImageNetBase):
                 f.write(filelist)
 
             tdu.mark_prepared(self.root)
-
 
 
 class ImageNetSR(Dataset):

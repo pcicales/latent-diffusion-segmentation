@@ -8,11 +8,12 @@ class LPIPSWithDiscriminator(nn.Module):
     def __init__(self, disc_start, logvar_init=0.0, kl_weight=1.0, pixelloss_weight=1.0,
                  disc_num_layers=3, disc_in_channels=3, disc_factor=1.0, disc_weight=1.0,
                  perceptual_weight=1.0, use_actnorm=False, disc_conditional=False,
-                 disc_loss="hinge"):
+                 disc_loss="hinge", mask_mode='sem'):
 
         super().__init__()
         assert disc_loss in ["hinge", "vanilla"]
         self.kl_weight = kl_weight
+        self.mask_mode = mask_mode
         self.pixel_weight = pixelloss_weight
         self.perceptual_loss = LPIPS().eval()
         self.perceptual_weight = perceptual_weight
@@ -47,7 +48,19 @@ class LPIPSWithDiscriminator(nn.Module):
                 weights=None):
         rec_loss = torch.abs(inputs.contiguous() - reconstructions.contiguous())
         if self.perceptual_weight > 0:
-            p_loss = self.perceptual_loss(inputs.contiguous(), reconstructions.contiguous())
+            if self.mask_mode == 'sem':
+                ind = inputs.shape
+                recd = reconstructions.shape
+                if recd[1] == 1:
+                    p_loss = self.perceptual_loss(inputs[:, -1:, ...].expand(ind[0], 3, *ind[2:]).contiguous(),
+                                                      reconstructions.expand(recd[0], 3, *recd[2:]).contiguous())
+                else:
+                    p_loss_img = self.perceptual_loss(inputs[:, :-1, ...].contiguous(), reconstructions[:, :-1, ...].contiguous())
+                    p_loss_sem = self.perceptual_loss(inputs[:, -1:, ...].expand(ind[0], 3, *ind[2:]).contiguous(),
+                                                      reconstructions[:, -1:, ...].expand(recd[0], 3, *recd[2:]).contiguous())
+                    p_loss = (p_loss_img * 0.75) + (p_loss_sem * 0.25)
+            else:
+                p_loss = self.perceptual_loss(inputs.contiguous(), reconstructions.contiguous())
             rec_loss = rec_loss + self.perceptual_weight * p_loss
 
         nll_loss = rec_loss / torch.exp(self.logvar) + self.logvar
@@ -94,8 +107,24 @@ class LPIPSWithDiscriminator(nn.Module):
         if optimizer_idx == 1:
             # second pass for discriminator update
             if cond is None:
-                logits_real = self.discriminator(inputs.contiguous().detach())
-                logits_fake = self.discriminator(reconstructions.contiguous().detach())
+                if self.mask_mode == 'sem':
+                    ind = inputs.shape
+                    recd = reconstructions.shape
+                    if recd[1] == 1:
+                        logits_real = self.discriminator(inputs[:, -1:, ...].contiguous().detach())
+                        logits_fake = self.discriminator(reconstructions.contiguous().detach())
+                    else:
+                        logits_real_img = self.discriminator(inputs[:, :-1, ...].contiguous().detach())
+                        logits_fake_img = self.discriminator(reconstructions[:, :-1, ...].contiguous().detach())
+
+                        logits_real_sem = self.discriminator(inputs[:, -1:, ...].expand(ind[0], 3, *ind[2:]).contiguous().detach())
+                        logits_fake_sem = self.discriminator(reconstructions[:, :-1, ...].expand(recd[0], 3, *recd[2:]).contiguous().detach())
+
+                        logits_real = (logits_real_img * 0.75) + (logits_real_sem * 0.25)
+                        logits_fake = (logits_fake_img * 0.75) + (logits_fake_sem * 0.25)
+                else:
+                    logits_real = self.discriminator(inputs.contiguous().detach())
+                    logits_fake = self.discriminator(reconstructions.contiguous().detach())
             else:
                 logits_real = self.discriminator(torch.cat((inputs.contiguous().detach(), cond), dim=1))
                 logits_fake = self.discriminator(torch.cat((reconstructions.contiguous().detach(), cond), dim=1))
