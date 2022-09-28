@@ -49,15 +49,23 @@ class Upsample(nn.Module):
         self.with_conv = with_conv
         if self.with_conv:
             self.conv = nn.ModuleList()
-            for down_samp in range(self.mult):
-                self.conv.append(nn.Sequential(
-                    torch.nn.Conv2d(in_channels,
-                                    in_channels,
-                                    kernel_size=3,
-                                    stride=1,
-                                    padding=1),
-                    Normalize(in_channels),
-                    nn.GELU()))
+            for up_samp in range(self.mult):
+                if (self.mult != 1) and (up_samp != (self.mult - 1)):
+                    self.conv.append(nn.Sequential(
+                        torch.nn.Conv2d(in_channels,
+                                        in_channels,
+                                        kernel_size=3,
+                                        stride=1,
+                                        padding=1),
+                        Normalize(in_channels),
+                        nn.GELU()))
+                else:
+                    self.conv.append(nn.Sequential(
+                        torch.nn.Conv2d(in_channels,
+                                        in_channels,
+                                        kernel_size=3,
+                                        stride=1,
+                                        padding=1)))
 
     def forward(self, x):
         for up_samp in range(self.mult):
@@ -75,14 +83,22 @@ class Downsample(nn.Module):
         if self.with_conv:
             self.conv = nn.ModuleList()
             for down_samp in range(self.mult):
-                self.conv.append(nn.Sequential(
-                    torch.nn.Conv2d(in_channels,
-                    in_channels,
-                    kernel_size=3,
-                    stride=2,
-                    padding=0),
-                    Normalize(in_channels),
-                    nn.GELU()))
+                if (self.mult != 1) and (down_samp != (self.mult - 1)):
+                    self.conv.append(nn.Sequential(
+                        torch.nn.Conv2d(in_channels,
+                        in_channels,
+                        kernel_size=3,
+                        stride=2,
+                        padding=0),
+                        Normalize(in_channels),
+                        nn.GELU()))
+                else:
+                    self.conv.append(nn.Sequential(
+                        torch.nn.Conv2d(in_channels,
+                                        in_channels,
+                                        kernel_size=3,
+                                        stride=2,
+                                        padding=0)))
 
     def forward(self, x):
         if self.with_conv:
@@ -515,7 +531,7 @@ class Decoder(nn.Module):
         self.in_channels = in_channels
         self.give_pre_end = give_pre_end
         self.tanh_out = tanh_out
-        self.up_mult = list(reversed(down_mult))
+        self.up_mult = down_mult
 
         # compute in_ch_mult, block_in and curr_res at lowest res
         in_ch_mult = (1,)+tuple(ch_mult)

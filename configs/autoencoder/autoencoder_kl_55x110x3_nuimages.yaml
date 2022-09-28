@@ -17,8 +17,8 @@ model:
     ddconfig:
       double_z: True
       z_channels: 3
-      resolution: [880,1600]
-#      resolution: [800, 800]
+#      resolution: [832,1488]
+      resolution: [464, 832]
 #      in_channels: 1 # sem mask only
 #      in_channels: 2 # sem and ins masks only
 #      in_channels: 3 # rgb only
@@ -49,8 +49,10 @@ data:
     train:
       target: ldm.data.nuimages.nuimageSRTrain
       params:
-        size_h: 880
-        size_w: 1600
+#        size_h: 832
+#        size_w: 1488
+        size_h: 464
+        size_w: 832
 #        size_h: 440
 #        size_w: 800
 #        size_h: 224
@@ -61,8 +63,10 @@ data:
     validation:
       target: ldm.data.nuimages.nuimageSRValidation
       params:
-        size_h: 880
-        size_w: 1600
+#        size_h: 832
+#        size_w: 1488
+        size_h: 464
+        size_w: 832
 #        size_h: 440
 #        size_w: 800
 #        size_h: 224
@@ -73,8 +77,10 @@ data:
     test:
       target: ldm.data.nuimages.nuimageSRTest
       params:
-        size_h: 880
-        size_w: 1600
+#        size_h: 832
+#        size_w: 1488
+        size_h: 464
+        size_w: 832
 #        size_h: 440
 #        size_w: 800
 #        size_h: 224
