@@ -3,27 +3,28 @@ import torch.nn as nn
 
 from taming.modules.losses.vqperceptual import *  # TODO: taming dependency yes/no?
 
-
 class LPIPSWithDiscriminator(nn.Module):
     def __init__(self, disc_start, logvar_init=0.0, kl_weight=1.0, pixelloss_weight=1.0,
                  disc_num_layers=3, disc_in_channels=3, disc_factor=1.0, disc_weight=1.0,
                  perceptual_weight=1.0, use_actnorm=False, disc_conditional=False,
-                 disc_loss="hinge", mask_mode='sem'):
+                 disc_loss="hinge", mask_mode='sem', val_crop_h=None, val_crop_w=None, precision=32):
 
         super().__init__()
         assert disc_loss in ["hinge", "vanilla"]
         self.kl_weight = kl_weight
         self.mask_mode = mask_mode
+        self.val_crop_h = val_crop_h
+        self.val_crop_w = val_crop_w
         self.pixel_weight = pixelloss_weight
         self.perceptual_loss = LPIPS().eval()
         self.perceptual_weight = perceptual_weight
         # output log variance
         self.logvar = nn.Parameter(torch.ones(size=()) * logvar_init)
-
         self.discriminator = NLayerDiscriminator(input_nc=disc_in_channels,
-                                                 n_layers=disc_num_layers,
-                                                 use_actnorm=use_actnorm
-                                                 ).apply(weights_init)
+                                             n_layers=disc_num_layers,
+                                             use_actnorm=use_actnorm
+                                             ).apply(weights_init)
+
         self.discriminator_iter_start = disc_start
         self.disc_loss = hinge_d_loss if disc_loss == "hinge" else vanilla_d_loss
         self.disc_factor = disc_factor
@@ -55,9 +56,11 @@ class LPIPSWithDiscriminator(nn.Module):
                     p_loss = self.perceptual_loss(inputs[:, -1:, ...].expand(ind[0], 3, *ind[2:]).contiguous(),
                                                       reconstructions.expand(recd[0], 3, *recd[2:]).contiguous())
                 else:
-                    p_loss_img = self.perceptual_loss(inputs[:, :-1, ...].contiguous(), reconstructions[:, :-1, ...].contiguous())
+                    p_loss_img = self.perceptual_loss(inputs[:, :-1, ...].contiguous(),
+                                                      reconstructions[:, :-1, ...].contiguous())
                     p_loss_sem = self.perceptual_loss(inputs[:, -1:, ...].expand(ind[0], 3, *ind[2:]).contiguous(),
-                                                      reconstructions[:, -1:, ...].expand(recd[0], 3, *recd[2:]).contiguous())
+                                                      reconstructions[:, -1:, ...].expand(recd[0], 3,
+                                                                                          *recd[2:]).contiguous())
                     p_loss = (p_loss_img * 0.75) + (p_loss_sem * 0.25)
             else:
                 p_loss = self.perceptual_loss(inputs.contiguous(), reconstructions.contiguous())

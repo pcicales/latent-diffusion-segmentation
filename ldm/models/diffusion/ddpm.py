@@ -83,7 +83,7 @@ class DDPM(pl.LightningModule):
         self.image_size = image_size  # try conv?
         self.channels = channels
         self.use_positional_encodings = use_positional_encodings
-        self.model = DiffusionWrapper(unet_config, conditioning_key)
+        self.model = DiffusionWrapper(unet_config, conditioning_key, self.set_mode, self.set_size, self.pair_transformer, self.pair_size)
         count_params(self.model, verbose=True)
         self.use_ema = use_ema
         if self.use_ema:
@@ -330,6 +330,9 @@ class DDPM(pl.LightningModule):
         x = batch[k]
         if len(x.shape) == 3:
             x = x[..., None]
+        # set operation options
+        if len(x.shape) == 5:
+            x = x.view(-1, *x.shape[2:])
         x = rearrange(x, 'b h w c -> b c h w')
         x = x.to(memory_format=torch.contiguous_format).float()
         return x
@@ -434,9 +437,17 @@ class LatentDiffusion(DDPM):
                  conditioning_key=None,
                  scale_factor=1.0,
                  scale_by_std=False,
+                 set_mode=False,
+                 set_size=10,
+                 pair_transformer=False,
+                 pair_size=2,
                  *args, **kwargs):
         self.num_timesteps_cond = default(num_timesteps_cond, 1)
         self.scale_by_std = scale_by_std
+        self.set_mode = set_mode
+        self.set_size = set_size
+        self.pair_transformer = pair_transformer
+        self.pair_size = pair_size
         assert self.num_timesteps_cond <= kwargs['timesteps']
         # for backwards compatibility after implementation of DiffusionWrapper
         if conditioning_key is None:
@@ -868,11 +879,19 @@ class LatentDiffusion(DDPM):
         return loss
 
     def forward(self, x, c, *args, **kwargs):
+        # if self.set_mode: # may not want to use this
+        #     t = torch.randint(0, self.num_timesteps, (int(x.shape[0]/self.set_size),), device=self.device).long().repeat_interleave(self.set_size)
+        # else:
         t = torch.randint(0, self.num_timesteps, (x.shape[0],), device=self.device).long()
         if self.model.conditioning_key is not None:
             assert c is not None
+            if self.set_mode:
+                c[self.cond_stage_key] = c[self.cond_stage_key].repeat_interleave(self.set_size)
+                c[self.first_stage_key] = c[self.first_stage_key].view(-1, *c[self.first_stage_key].shape[2:])
             if self.cond_stage_trainable:
                 c = self.get_learned_conditioning(c)
+                # squeeze out the single dim if its one condition, multi conditional doesnt work yet
+                # c = c.squeeze(1)
             if self.shorten_cond_schedule:  # TODO: drop this option
                 tc = self.cond_ids[t].to(self.device)
                 c = self.q_sample(x_start=c, t=tc, noise=torch.randn_like(c.float()))
@@ -1393,8 +1412,12 @@ class LatentDiffusion(DDPM):
 
 
 class DiffusionWrapper(pl.LightningModule):
-    def __init__(self, diff_model_config, conditioning_key):
+    def __init__(self, diff_model_config, conditioning_key,  set_mode, set_size, pair_transformer, pair_size):
         super().__init__()
+        diff_model_config['params']['set_mode'] = set_mode
+        diff_model_config['params']['set_size'] = set_size
+        diff_model_config['params']['pair_transformer'] = pair_transformer
+        diff_model_config['params']['pair_size'] = pair_size
         self.diffusion_model = instantiate_from_config(diff_model_config)
         self.conditioning_key = conditioning_key
         assert self.conditioning_key in [None, 'concat', 'crossattn', 'hybrid', 'adm']

@@ -1,9 +1,16 @@
-import argparse, os, sys, datetime, glob, importlib, csv
+import os
+# os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+import argparse, sys, datetime, glob, importlib, csv
 import numpy as np
 import time
 import torch
 import torchvision
 import pytorch_lightning as pl
+
+# dont do this forever
+import warnings
+warnings.filterwarnings("ignore")
+
 
 from packaging import version
 from omegaconf import OmegaConf
@@ -19,6 +26,8 @@ from pytorch_lightning.utilities import rank_zero_info
 
 from ldm.data.base import Txt2ImgIterableBaseDataset
 from ldm.util import instantiate_from_config
+
+
 
 
 def get_parser(**parser_kwargs):
@@ -58,7 +67,7 @@ def get_parser(**parser_kwargs):
         metavar="base_config.yaml",
         help="paths to base configs. Loaded from left-to-right. "
              "Parameters can be overwritten or added with command-line options of the form `--key value`.",
-        default=['configs/autoencoder/autoencoder_kl_55x110x3_nuimages.yaml'],
+        default=['configs/latent-diffusion/camelyon-set-ldm-kl-32x32x3.yaml'],
     )
     parser.add_argument(
         "-t",
@@ -73,7 +82,7 @@ def get_parser(**parser_kwargs):
         "--no-test",
         type=str2bool,
         const=True,
-        default=False,
+        default=True,
         nargs="?",
         help="disable test",
     )
@@ -109,7 +118,7 @@ def get_parser(**parser_kwargs):
         "-l",
         "--logdir",
         type=str,
-        default="/data/pcicales/latent_diffusion_segmentation/autoencoder_nuimage",
+        default="/data/pcicales/latent_diffusion_segmentation/set_ldm_camelyon_kl_32x32x3",
         help="directory for logging dat shit",
     )
     parser.add_argument(
@@ -117,8 +126,75 @@ def get_parser(**parser_kwargs):
         type=str2bool,
         nargs="?",
         const=True,
-        default=True,
+        default=False,
         help="scale base-lr by ngpu * batch_size * n_accumulate",
+    )
+    return parser
+
+def get_aux_parser(**parser_kwargs):
+    def str2bool(v):
+        if isinstance(v, bool):
+            return v
+        if v.lower() in ("yes", "true", "t", "y", "1"):
+            return True
+        elif v.lower() in ("no", "false", "f", "n", "0"):
+            return False
+        else:
+            raise argparse.ArgumentTypeError("Boolean value expected.")
+
+    parser = argparse.ArgumentParser(**parser_kwargs)
+    parser.add_argument(
+        "--precision",
+        default=32,
+        help="set precision for pytorch lightning trainer, 16 for mixed 32 for full",
+    )
+    parser.add_argument(
+        "--num_sanity_val_steps",
+        type=int,
+        default=1,
+        help="set sanity check passes for validation",
+    )
+    parser.add_argument(
+        "--strategy",
+        type=str,
+        default='ddp',
+        help="set pytorch lightning strategy",
+    )
+    parser.add_argument(
+        "--accelerator",
+        type=str,
+        default='gpu',
+        help="set pytorch lightning accelerator",
+    )
+    parser.add_argument(
+        "--gradient_clip_val",
+        type=float,
+        default=0,
+        help="set pytorch lightning gradient clipping value",
+    )
+    parser.add_argument(
+        "--amp_backend",
+        type=str,
+        default="native",
+        help="set pytorch lightning mixed precision backend",
+    )
+    parser.add_argument(
+        "--amp_level",
+        type=str,
+        default='01',
+        help="set pytorch lightning mixed precision mode when using apex",
+    )
+    parser.add_argument(
+        "--max_epochs",
+        type=int,
+        default=-1,
+        help="set pytorch lightning max epochs",
+    )
+    parser.add_argument(
+        "--check_val_every_n_epoch",
+        type=int,
+        default=1,
+        help="how often (in epochs) to run validation",
     )
     return parser
 
@@ -404,7 +480,8 @@ class CUDACallback(Callback):
         torch.cuda.synchronize(trainer.root_gpu)
         self.start_time = time.time()
 
-    def on_train_epoch_end(self, trainer, pl_module, outputs):
+    # def on_train_epoch_end(self, trainer, pl_module, outputs):
+    def on_train_epoch_end(self, trainer, pl_module):
         torch.cuda.synchronize(trainer.root_gpu)
         max_memory = torch.cuda.max_memory_allocated(trainer.root_gpu) / 2 ** 20
         epoch_time = time.time() - self.start_time
@@ -468,6 +545,10 @@ if __name__ == "__main__":
     # (in particular `main.DataModuleFromConfig`)
     sys.path.append(os.getcwd())
 
+    # get the aux parser options
+    aux_parser = get_aux_parser()
+    aux_opt, aux_unknown = aux_parser.parse_known_args()
+
     parser = get_parser()
     parser = Trainer.add_argparse_args(parser)
 
@@ -507,6 +588,9 @@ if __name__ == "__main__":
         else:
             name = ""
         nowname = now + name + opt.postfix
+        # if aux_opt.strategy == 'ddp_spawn':
+        #     logdir = os.path.join(opt.logdir + '/child_runs', nowname)
+        # else:
         logdir = os.path.join(opt.logdir, nowname)
 
     ckptdir = os.path.join(logdir, "checkpoints")
@@ -522,20 +606,38 @@ if __name__ == "__main__":
         # merge trainer cli with config
         trainer_config = lightning_config.get("trainer", OmegaConf.create())
         # default to ddp
-        trainer_config["accelerator"] = "ddp"
+        # trainer_config["accelerator"] = "ddp"
+        trainer_config["strategy"] = aux_opt.strategy
+        trainer_config["accelerator"] = aux_opt.accelerator
+
         for k in nondefault_trainer_args(opt):
             trainer_config[k] = getattr(opt, k)
         if not "gpus" in trainer_config:
             del trainer_config["accelerator"]
+            del trainer_config["strategy"]
             cpu = True
         else:
             gpuinfo = trainer_config["gpus"]
             print(f"Running on GPUs {gpuinfo}")
             cpu = False
+
+        # add aux options
+        trainer_config["precision"] = aux_opt.precision
+        trainer_config["num_sanity_val_steps"] = aux_opt.num_sanity_val_steps
+        trainer_config["gradient_clip_val"] = aux_opt.gradient_clip_val
+        trainer_config["max_epochs"] = aux_opt.max_epochs
+        trainer_config["amp_backend"] = aux_opt.amp_backend
+        trainer_config["check_val_every_n_epoch"] = aux_opt.check_val_every_n_epoch
+        if aux_opt.amp_backend == 'apex':
+            trainer_config["amp_level"] = aux_opt.amp_level
+
         trainer_opt = argparse.Namespace(**trainer_config)
         lightning_config.trainer = trainer_config
 
         # model
+        # add mixed p options for loss config
+        if 'AutoencoderKL' in config.model.target:
+            config.model.params.lossconfig.params['precision'] = aux_opt.precision
         model = instantiate_from_config(config.model)
 
         # trainer and callbacks
@@ -664,6 +766,22 @@ if __name__ == "__main__":
         trainer.logdir = logdir  ###
 
         # data
+        # add task specific settings (messy)
+        if 'AutoencoderKL' in config.model.target:
+            config.data.params.train.params['precision'] = aux_opt.precision
+            config.data.params.validation.params['precision'] = aux_opt.precision
+            try:
+                config.data.params.test.params['precision'] = aux_opt.precision
+            except:
+                print('NOT PERFORMING TEST SET EVAL!')
+        elif ('LatentDiffusion' in config.model.target) and config.model.params.set_mode:
+            config.data.params.train.params['set_size'] = config.model.params.set_size
+            config.data.params.validation.params['set_size'] = config.model.params.set_size
+            try:
+                config.data.params.test.params['set_size'] = config.model.params.set_size
+            except:
+                print('NOT PERFORMING TEST SET EVAL!')
+
         data = instantiate_from_config(config.data)
         # NOTE according to https://pytorch-lightning.readthedocs.io/en/latest/datamodules.html
         # calling these ourselves should not be necessary but it is.
@@ -741,5 +859,4 @@ if __name__ == "__main__":
             dst = os.path.join(dst, "debug_runs", name)
             os.makedirs(os.path.split(dst)[0], exist_ok=True)
             os.rename(logdir, dst)
-        if trainer.global_rank == 0:
-            print(trainer.profiler.summary())
+        if trainer.global_rank == 0:            print(trainer.profiler.summary())

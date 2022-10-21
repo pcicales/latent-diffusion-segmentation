@@ -23,12 +23,16 @@ class ClassEmbedder(nn.Module):
         super().__init__()
         self.key = key
         self.embedding = nn.Embedding(n_classes, embed_dim)
+        self.n_classes = n_classes
+
 
     def forward(self, batch, key=None):
         if key is None:
             key = self.key
         # this is for use in crossattn
-        c = batch[key][:, None]
+        # c = batch[key][:, None] # bug?
+        c = torch.nn.functional.one_hot(batch[key], self.n_classes)
+        c[:, -1] = 1 # set the null class
         c = self.embedding(c)
         return c
 

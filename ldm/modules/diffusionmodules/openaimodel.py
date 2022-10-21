@@ -7,6 +7,7 @@ import numpy as np
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
+import torch
 
 from ldm.modules.diffusionmodules.util import (
     checkpoint,
@@ -261,6 +262,12 @@ class ResBlock(TimestepBlock):
             h = in_conv(h)
         else:
             h = self.in_layers(x)
+
+        # interleave if needed, if we are using pair transformers, may be a cleaner way to do this
+        if h.shape[0] != emb.shape[0]:
+            rep = max(h.shape[0], emb.shape[0]) // min(h.shape[0], emb.shape[0])
+            emb = emb.repeat_interleave(rep, dim=0)
+
         emb_out = self.emb_layers(emb).type(h.dtype)
         while len(emb_out.shape) < len(h.shape):
             emb_out = emb_out[..., None]
@@ -289,9 +296,19 @@ class AttentionBlock(nn.Module):
         num_head_channels=-1,
         use_checkpoint=False,
         use_new_attention_order=False,
+        set_mode=False,
+        set_size=10,
+        pair_transformer=False,
+        pair_size=2,
+        step_block='middle'
     ):
         super().__init__()
         self.channels = channels
+        self.set_mode = set_mode
+        self.set_size = set_size
+        self.pair_transformer = pair_transformer
+        self.pair_size = pair_size
+        self.step_block = step_block
         if num_head_channels == -1:
             self.num_heads = num_heads
         else:
@@ -300,6 +317,15 @@ class AttentionBlock(nn.Module):
             ), f"q,k,v channels {channels} is not divisible by num_head_channels {num_head_channels}"
             self.num_heads = channels // num_head_channels
         self.use_checkpoint = use_checkpoint
+
+        if self.pair_transformer:
+            if self.step_block == 'input':
+                self.norm_compression = normalization(channels * self.pair_size)
+                self.x_compression = nn.Sequential(conv_nd(1, channels * self.pair_size, channels, 1), nn.SiLU())
+            elif self.step_block == 'output':
+                self.norm_decompression = normalization(channels)
+                self.x_decompression = nn.Sequential(conv_nd(1, channels, channels * self.pair_size, 1), nn.SiLU())
+
         self.norm = normalization(channels)
         self.qkv = conv_nd(1, channels, channels * 3, 1)
         if use_new_attention_order:
@@ -318,10 +344,19 @@ class AttentionBlock(nn.Module):
     def _forward(self, x):
         b, c, *spatial = x.shape
         x = x.reshape(b, c, -1)
+        if self.pair_transformer:
+            if self.step_block == 'input':
+                x = x.reshape(b // self.pair_size, c * self.pair_size, -1)
+                x = self.x_compression(self.norm_compression(x))
+            elif self.step_block == 'output':
+                x = self.x_decompression(self.norm_decompression(x))
+                db, dc, _ = x.shape
+                x = x.reshape(db * self.pair_size, dc // self.pair_size, -1)
+        b_out = x.shape[0]
         qkv = self.qkv(self.norm(x))
         h = self.attention(qkv)
         h = self.proj_out(h)
-        return (x + h).reshape(b, c, *spatial)
+        return (x + h).reshape(b_out, c, *spatial)
 
 
 def count_flops_attn(model, _x, y):
@@ -466,8 +501,18 @@ class UNetModel(nn.Module):
         context_dim=None,                 # custom transformer support
         n_embed=None,                     # custom support for prediction of discrete ids into codebook of first stage vq model
         legacy=True,
+        set_mode=False,
+        set_size=10,
+        pair_transformer=False,
+        pair_size=2,
     ):
         super().__init__()
+        self.set_mode = set_mode
+        self.set_size = set_size
+        self.pair_transformer = pair_transformer
+        self.pair_size = pair_size
+        if set_mode and pair_transformer:
+            assert set_size % (pair_size**(len(channel_mult)-1)) == 0, 'Foolish human! You are asking me to process pairwise sets with uneven inputs! Check pair_size and set_size...'
         if use_spatial_transformer:
             assert context_dim is not None, 'Fool!! You forgot to include the dimension of your cross-attention conditioning...'
 
@@ -547,6 +592,11 @@ class UNetModel(nn.Module):
                     if legacy:
                         #num_heads = 1
                         dim_head = ch // num_heads if use_spatial_transformer else num_head_channels
+                    # the first attention module works simply on images
+                    if (attention_resolutions[0] != ds) and pair_transformer:
+                        pair_step = 'input'
+                    else:
+                        pair_step = 'middle'
                     layers.append(
                         AttentionBlock(
                             ch,
@@ -554,8 +604,18 @@ class UNetModel(nn.Module):
                             num_heads=num_heads,
                             num_head_channels=dim_head,
                             use_new_attention_order=use_new_attention_order,
+                            set_mode=set_mode,
+                            set_size=set_size,
+                            pair_transformer=pair_transformer,
+                            pair_size=pair_size,
+                            step_block=pair_step
                         ) if not use_spatial_transformer else SpatialTransformer(
-                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim
+                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim,
+                            set_mode=set_mode,
+                            set_size=set_size,
+                            pair_transformer=pair_transformer,
+                            pair_size=pair_size,
+                            step_block=pair_step
                         )
                     )
                 self.input_blocks.append(TimestepEmbedSequential(*layers))
@@ -609,8 +669,18 @@ class UNetModel(nn.Module):
                 num_heads=num_heads,
                 num_head_channels=dim_head,
                 use_new_attention_order=use_new_attention_order,
+                set_mode=set_mode,
+                set_size=set_size,
+                pair_transformer=pair_transformer,
+                pair_size=pair_size,
+                step_block='middle'
             ) if not use_spatial_transformer else SpatialTransformer(
-                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim
+                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim,
+                            set_mode=set_mode,
+                            set_size=set_size,
+                            pair_transformer=pair_transformer,
+                            pair_size=pair_size,
+                            step_block='middle'
                         ),
             ResBlock(
                 ch,
@@ -639,6 +709,7 @@ class UNetModel(nn.Module):
                     )
                 ]
                 ch = model_channels * mult
+                # add a special case for the attention block, we need to have the same dim
                 if ds in attention_resolutions:
                     if num_head_channels == -1:
                         dim_head = ch // num_heads
@@ -648,6 +719,12 @@ class UNetModel(nn.Module):
                     if legacy:
                         #num_heads = 1
                         dim_head = ch // num_heads if use_spatial_transformer else num_head_channels
+                    # the first attention module works simply on images
+                    if (attention_resolutions[0] != ds) and pair_transformer and (i != num_res_blocks):
+                    # if (attention_resolutions[0] != ds) and pair_transformer:
+                        pair_step = 'output'
+                    else:
+                        pair_step = 'middle'
                     layers.append(
                         AttentionBlock(
                             ch,
@@ -655,8 +732,18 @@ class UNetModel(nn.Module):
                             num_heads=num_heads_upsample,
                             num_head_channels=dim_head,
                             use_new_attention_order=use_new_attention_order,
+                            set_mode=set_mode,
+                            set_size=set_size,
+                            pair_transformer=pair_transformer,
+                            pair_size=pair_size,
+                            step_block=pair_step
                         ) if not use_spatial_transformer else SpatialTransformer(
-                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim
+                            ch, num_heads, dim_head, depth=transformer_depth, context_dim=context_dim,
+                            set_mode=set_mode,
+                            set_size=set_size,
+                            pair_transformer=pair_transformer,
+                            pair_size=pair_size,
+                            step_block=pair_step
                         )
                     )
                 if level and i == num_res_blocks:
@@ -707,7 +794,7 @@ class UNetModel(nn.Module):
         self.middle_block.apply(convert_module_to_f32)
         self.output_blocks.apply(convert_module_to_f32)
 
-    def forward(self, x, timesteps=None, context=None, y=None,**kwargs):
+    def forward(self, x, timesteps=None, context=None, y=None, **kwargs):
         """
         Apply the model to an input batch.
         :param x: an [N x C x ...] Tensor of inputs.
@@ -727,14 +814,53 @@ class UNetModel(nn.Module):
             assert y.shape == (x.shape[0],)
             emb = emb + self.label_emb(y)
 
+        if self.pair_transformer:
+            set_batch = x.shape[0] // self.set_size
+
         h = x.type(self.dtype)
-        for module in self.input_blocks:
-            h = module(h, emb, context)
+
+        # input
+        for in_id, module in enumerate(self.input_blocks):
+            if self.pair_transformer:
+                emb_set = torch.mean(emb.view(h.shape[0], emb.shape[0]//h.shape[0], -1), axis=1)
+                # if context is not None:
+                #     context_set = torch.mean(context.view(h.shape[0], context.shape[0] // h.shape[0], context.shape[1], -1), axis=1)
+                #     h = module(h, emb_set, context_set)
+                h = module(h, emb_set, context)
+                # else:
+                #     h = module(h, emb_set, context)
+                assert h.shape[0] >= set_batch, 'Your set batch size is smaller than your input batch! Check set_size and pair_size...'
+            else:
+                h = module(h, emb, context)
             hs.append(h)
-        h = self.middle_block(h, emb, context)
-        for module in self.output_blocks:
+
+        # middle
+        if self.pair_transformer:
+            emb_set = torch.mean(emb.view(h.shape[0], emb.shape[0] // h.shape[0], -1), axis=1)
+            # if context is not None:
+            #     context_set = torch.mean(context.view(h.shape[0], context.shape[0] // h.shape[0], context.shape[1], -1), axis=1)
+            #     h = module(h, emb_set, context_set)
+            h = self.middle_block(h, emb_set, context)
+            # else:
+            #     h = module(h, emb_set, context)
+        else:
+            h = self.middle_block(h, emb, context)
+
+        # output
+        for out_id, module in enumerate(self.output_blocks):
             h = th.cat([h, hs.pop()], dim=1)
-            h = module(h, emb, context)
+            if self.pair_transformer:
+                emb_set = torch.mean(emb.view(h.shape[0], emb.shape[0]//h.shape[0], -1), axis=1)
+                # if context is not None:
+                #     context_set = torch.mean(context.view(h.shape[0], context.shape[0] // h.shape[0], context.shape[1], -1), axis=1)
+                #     h = module(h, emb_set, context_set)
+                h = module(h, emb_set, context)
+                # else:
+                #     h = module(h, emb_set, context)
+            else:
+                h = module(h, emb, context)
+
+
         h = h.type(x.dtype)
         if self.predict_codebook_ids:
             return self.id_predictor(h)

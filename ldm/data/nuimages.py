@@ -279,7 +279,7 @@ class nuimageTest(nuimageBase):
 class nuimageSR(Dataset):
     def __init__(self, size_h=None, size_w=None, mask_mode='sem',
                  degradation=None, downscale_f=4, min_crop_f=0.5, max_crop_f=1.,
-                 random_crop=True):
+                 random_crop=True, precision=32):
         """
         Imagenet Superresolution Dataloader
         Performs following ops in order:
@@ -297,6 +297,7 @@ class nuimageSR(Dataset):
         :param random_crop:
         """
         self.mask_mode = mask_mode
+        self.precision = precision
         self.base = self.get_base()
         assert size_h
         assert size_w
@@ -424,6 +425,10 @@ class nuimageSR(Dataset):
             LR_image = self.degradation_process(image=image)["image"]
 
         example = {}
+        # if self.precision == 16:
+        #     example["image"] = (image/127.5 - 1.0).astype(np.float16)
+        #     example["LR_image"] = (LR_image/127.5 - 1.0).astype(np.float16)
+        # else:
         example["image"] = (image/127.5 - 1.0).astype(np.float32)
         example["LR_image"] = (LR_image/127.5 - 1.0).astype(np.float32)
 
@@ -448,7 +453,7 @@ class nuimageSRValidation(nuimageSR):
         super().__init__(**kwargs)
 
     def get_base(self):
-        dset = nuimageTrain(process_images=False,
+        dset = nuimageValidation(process_images=False,
                             data_rgb_root='/data/public/public_access/nuimages/RGBA/val/RGB',
                             data_sem_root='/data/public/public_access/nuimages/RGBA/val/sem',
                             data_ins_root='/data/public/public_access/nuimages/RGBA/val/ins')

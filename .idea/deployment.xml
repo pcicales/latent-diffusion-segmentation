@@ -1,11 +1,26 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="pcicales@moana.ee.e.uh.edu:22 (7)" remoteFilesAllowedToDisappearOnAutoupload="false">
+  <component name="PublishConfigData" autoUpload="Always" serverName="pcicales@moana.ee.e.uh.edu:22 password" remoteFilesAllowedToDisappearOnAutoupload="false" confirmBeforeUploading="false">
+    <option name="confirmBeforeUploading" value="false" />
     <serverData>
       <paths name="pcicales@moana.ee.e.uh.edu:22">
         <serverdata>
           <mappings>
             <mapping local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="pcicales@moana.ee.e.uh.edu:22 (10)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/cougarnet.uh.edu/pcicales/PycharmProjects/latent-diffusion-segmentation" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="pcicales@moana.ee.e.uh.edu:22 (11)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/cougarnet.uh.edu/pcicales/PycharmProjects/latent-diffusion-segmentation" local="$PROJECT_DIR$" />
           </mappings>
         </serverdata>
       </paths>
@@ -45,6 +60,27 @@
         </serverdata>
       </paths>
       <paths name="pcicales@moana.ee.e.uh.edu:22 (7)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/cougarnet.uh.edu/pcicales/PycharmProjects/latent-diffusion-segmentation" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="pcicales@moana.ee.e.uh.edu:22 (8)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/cougarnet.uh.edu/pcicales/PycharmProjects/latent-diffusion-segmentation" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="pcicales@moana.ee.e.uh.edu:22 (9)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/cougarnet.uh.edu/pcicales/PycharmProjects/latent-diffusion-segmentation" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="pcicales@moana.ee.e.uh.edu:22 password">
         <serverdata>
           <mappings>
             <mapping deploy="/home/cougarnet.uh.edu/pcicales/PycharmProjects/latent-diffusion-segmentation" local="$PROJECT_DIR$" />

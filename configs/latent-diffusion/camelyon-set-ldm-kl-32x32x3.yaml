@@ -1,0 +1,139 @@
+model:
+#  base_learning_rate: 5.0e-5   # set to target_lr by starting main.py with '--scale_lr False'
+#  base_learning_rate: 0.00001
+  base_learning_rate: 0.0001
+  target: ldm.models.diffusion.ddpm.LatentDiffusion
+  params:
+    linear_start: 0.0015
+#    linear_end: 0.0155
+    linear_end: 0.0195
+    num_timesteps_cond: 1
+    log_every_t: 200
+    timesteps: 1000
+#    loss_type: l1
+    first_stage_key: "image"
+    cond_stage_key: "class_label"
+    image_size: 32
+    channels: 3
+    cond_stage_trainable: True
+#    concat_mode: False
+    conditioning_key: crossattn
+#    scale_by_std: True
+    set_mode: True # generate sets of set_size
+#    set_mode: False # generate sets of set_size
+#    set_size: 0
+    set_size: 64 # size of the generated set data
+    pair_transformer: True # use pairwise encoding with set
+#    pair_transformer: False # use pairwise encoding with set
+    pair_size: 2 # number of instances to process with attention ops
+#    pair_size: 0
+    monitor: val/loss
+    use_ema: False
+
+#    scheduler_config: # 1000 warmup steps
+#      target: ldm.lr_scheduler.LambdaLinearScheduler
+#      params:
+#        warm_up_steps: [1000]
+#        cycle_lengths: [1000000000000]
+#        f_start: [1.e-6]
+#        f_max: [1.]
+#        f_min: [ 1.]
+
+    unet_config:
+      target: ldm.modules.diffusionmodules.openaimodel.UNetModel
+      params:
+        image_size: 32
+        in_channels: 3
+        out_channels: 3
+        model_channels: 192
+#        attention_resolutions: [ 1, 2, 4, 8 ]   # 32, 16, 8, 4
+        attention_resolutions:
+          - 2
+          - 4
+          - 8
+        num_res_blocks: 2
+#        channel_mult: [ 1,2,2,4,4 ]  # 32, 16, 8, 4, 2
+        channel_mult:
+          - 1
+          - 2
+          - 3
+          - 5
+#        num_heads: 8
+        num_heads: 1
+        use_spatial_transformer: True
+        #
+        transformer_depth: 1
+#        use_scale_shift_norm: True
+#        resblock_updown: True
+        context_dim: 512
+
+    first_stage_config:
+      target: ldm.models.autoencoder.AutoencoderKL
+      params:
+        embed_dim: 3
+        monitor: "val/rec_loss"
+        ckpt_path: "/data/pcicales/latent_diffusion_segmentation/autoencoder_camelyon_superres/2022-10-01T17-21-45_autoencoder_kl_55x110x3_camelyon/checkpoints/epoch=000002.ckpt"
+        ddconfig:
+          double_z: True
+          z_channels: 3
+          resolution: 256
+          in_channels: 3
+          out_ch: 3
+          ch: 64
+          ch_mult: [ 1,2,4,8 ]  # num_down = len(ch_mult)-1
+          down_mult: [ 1,1,1 ]  # num_down = len(ch_mult)-1, we also use norm and gelu for each down
+          num_res_blocks: 3 # num_res_blocks = len(ch_mult)-1
+          attn_resolutions: [ ]
+          dropout: 0.0
+        lossconfig:
+          target: torch.nn.Identity
+
+#    cond_stage_config: "__is_unconditional__"
+    cond_stage_config:
+      target: ldm.modules.encoders.modules.ClassEmbedder
+      params:
+        embed_dim: 512
+        key: class_label
+        n_classes: 3 # needs to be number of classes + 1 to account for the null class, first class starts from 0 if int classes
+data:
+  target: main.DataModuleFromConfig
+  params:
+    batch_size: 3
+#    batch_size: 256
+    num_workers: 5
+    wrap: False
+    train:
+      target: ldm.data.camelyon.camelyonSetTrain
+#      target: ldm.data.camelyon.camelyonInstanceTrain
+      params:
+        size_h: 256
+        size_w: 256
+        base_res: 256
+    validation:
+      target: ldm.data.camelyon.camelyonSetValidation
+#      target: ldm.data.camelyon.camelyonInstanceValidation
+      params:
+        size_h: 256
+        size_w: 256
+        base_res: 256
+
+lightning:
+  callbacks:
+    image_logger:
+      target: main.ImageLogger
+      params:
+        batch_frequency: 5000
+        max_images: 8
+        increase_log_steps: False
+
+
+  trainer:
+    benchmark: True
+#    accumulate_grad_batches: 2
+#    accumulate_grad_batches: 12
+    accumulate_grad_batches: 4
+    gpus: 7,
+#    gpus: 6,7,
+#    gpus: 4,5,
+#    gpus: 2,3,
+#    gpus: 0,1,2,3,

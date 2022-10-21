@@ -14,27 +14,17 @@ model:
         disc_weight: 0.5
 #        mask_mode: 'sem'
         mask_mode: 'img'
-        val_crop_h: 128 # compute loss on crops during validation to avoid issues with memory
-        val_crop_w: 128
+        val_crop_h: 0 # compute loss on crops during validation to avoid issues with memory
+        val_crop_w: 0
 
 
     ddconfig:
       double_z: True
       z_channels: 3
-      resolution: [912,1600]
-#      resolution: [464, 832]
-#      in_channels: 1 # sem mask only
-#      in_channels: 2 # sem and ins masks only
+      resolution: [256,256]
       in_channels: 3 # rgb only
-#      in_channels: 4 # rgb and sem mask
-#      in_channels: 5 # rgb, sem and ins masks
-#      out_ch: 1 # sem mask only
-#      out_ch: 2 # sem and ins masks only
       out_ch: 3 # rgb only
-#      out_ch: 4 # rgb and sem mask
-#      out_ch: 5 # rgb, sem and ins masks
-#      ch: 64
-      ch: 32
+      ch: 64
       ch_mult: [ 1,2,4,8 ]  # num_down = len(ch_mult)-1
       down_mult: [ 1,1,1 ]  # num_down = len(ch_mult)-1, we also use norm and gelu for each down
       num_res_blocks: 3 # num_res_blocks = len(ch_mult)-1
@@ -45,53 +35,38 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-#    batch_size: 12
+    batch_size: 12
 #    batch_size: 2
-    batch_size: 1
-    num_workers: 1
+#    batch_size: 1
+    num_workers: 8
     wrap: True
     train:
-      target: ldm.data.nuimages.nuimageSRTrain
+      target: ldm.data.camelyon.camelyonSRTrain
       params:
-        size_h: 912
-        size_w: 1600
-#        size_h: 464
-#        size_w: 832
-#        size_h: 440
-#        size_w: 800
-#        size_h: 224
-#        size_w: 400
-#        mask_mode: 'sem'
+        size_h: 256
+        size_w: 256
+        base_res: 256
+        max_per_case: 5000
         mask_mode: 'img'
         downscale_f: 8
         degradation: pil_nearest
     validation:
-      target: ldm.data.nuimages.nuimageSRValidation
+      target: ldm.data.camelyon.camelyonSRValidation
       params:
-        size_h: 912
-        size_w: 1600
-#        size_h: 464
-#        size_w: 832
-#        size_h: 440
-#        size_w: 800
-#        size_h: 224
-#        size_w: 400
-#        mask_mode: 'sem'
+        size_h: 256
+        size_w: 256
+        base_res: 256
+        max_per_case: 5000
         mask_mode: 'img'
         downscale_f: 8
         degradation: pil_nearest
     test:
-      target: ldm.data.nuimages.nuimageSRTest
+      target: ldm.data.camelyon.camelyonSRTest
       params:
-        size_h: 912
-        size_w: 1600
-#        size_h: 464
-#        size_w: 832
-#        size_h: 440
-#        size_w: 800
-#        size_h: 224
-#        size_w: 400
-#        mask_mode: 'sem'
+        size_h: 256
+        size_w: 256
+        base_res: 256
+        max_per_case: 5000
         mask_mode: 'img'
         downscale_f: 8
         degradation: pil_nearest
@@ -108,8 +83,8 @@ lightning:
 
   trainer:
     benchmark: True
-#    accumulate_grad_batches: 2
+    accumulate_grad_batches: 2
 #    accumulate_grad_batches: 12
-    accumulate_grad_batches: 24
+#    accumulate_grad_batches: 24
     gpus: 0,1,2,3,
 #    gpus: 0,

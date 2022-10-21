@@ -48,6 +48,10 @@ class Upsample(nn.Module):
         self.mult = mult
         self.with_conv = with_conv
         if self.with_conv:
+            if in_channels < 32:
+                norm_group_in = 8
+            else:
+                norm_group_in = 32
             self.conv = nn.ModuleList()
             for up_samp in range(self.mult):
                 if (self.mult != 1) and (up_samp != (self.mult - 1)):
@@ -57,7 +61,7 @@ class Upsample(nn.Module):
                                         kernel_size=3,
                                         stride=1,
                                         padding=1),
-                        Normalize(in_channels),
+                        Normalize(in_channels, num_groups=norm_group_in),
                         nn.GELU()))
                 else:
                     self.conv.append(nn.Sequential(
@@ -81,6 +85,10 @@ class Downsample(nn.Module):
         self.with_conv = with_conv
         self.mult = mult
         if self.with_conv:
+            if in_channels < 32:
+                norm_group_in = 8
+            else:
+                norm_group_in = 32
             self.conv = nn.ModuleList()
             for down_samp in range(self.mult):
                 if (self.mult != 1) and (down_samp != (self.mult - 1)):
@@ -90,7 +98,7 @@ class Downsample(nn.Module):
                         kernel_size=3,
                         stride=2,
                         padding=0),
-                        Normalize(in_channels),
+                        Normalize(in_channels, num_groups=norm_group_in),
                         nn.GELU()))
                 else:
                     self.conv.append(nn.Sequential(

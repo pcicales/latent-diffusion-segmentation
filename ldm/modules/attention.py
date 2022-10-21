@@ -172,6 +172,11 @@ class CrossAttention(nn.Module):
 
         q = self.to_q(x)
         context = default(context, x)
+        if not torch.equal(context, x):
+            if context.shape[0] != x.shape[0]:
+                # TODO: fix this we assume this is from set operations
+                context = torch.mean(context.view(x.shape[0], context.shape[0] // x.shape[0], context.shape[1], -1), axis=1)
+
         k = self.to_k(context)
         v = self.to_v(context)
 
@@ -224,11 +229,37 @@ class SpatialTransformer(nn.Module):
     Finally, reshape to image
     """
     def __init__(self, in_channels, n_heads, d_head,
-                 depth=1, dropout=0., context_dim=None):
+                 depth=1, dropout=0., context_dim=None,
+                 set_mode=False,
+                 set_size=10,
+                 pair_transformer=False,
+                 pair_size=2,
+                 step_block='middle'):
         super().__init__()
         self.in_channels = in_channels
+        self.set_mode = set_mode
+        self.set_size = set_size
+        self.pair_transformer = pair_transformer
+        self.pair_size = pair_size
+        self.step_block = step_block
         inner_dim = n_heads * d_head
         self.norm = Normalize(in_channels)
+
+        if self.pair_transformer:
+            if self.step_block == 'input':
+                self.norm_compression = Normalize(in_channels * self.pair_size)
+                self.proj_compression = nn.Sequential(nn.Conv2d(in_channels * self.pair_size,
+                                 inner_dim,
+                                 kernel_size=1,
+                                 stride=1,
+                                 padding=0), nn.SiLU())
+            elif self.step_block == 'output':
+                self.norm_decompression = Normalize(in_channels)
+                self.proj_decompression = nn.Sequential(nn.Conv2d(in_channels,
+                                 inner_dim * self.pair_size,
+                                 kernel_size=1,
+                                 stride=1,
+                                 padding=0), nn.SiLU())
 
         self.proj_in = nn.Conv2d(in_channels,
                                  inner_dim,
@@ -250,7 +281,18 @@ class SpatialTransformer(nn.Module):
     def forward(self, x, context=None):
         # note: if no context is given, cross-attention defaults to self-attention
         b, c, h, w = x.shape
+
+        if self.pair_transformer:
+            if self.step_block == 'input':
+                x = x.reshape(b // self.pair_size, c * self.pair_size, h, w)
+                x = self.proj_compression(self.norm_compression(x))
+            elif self.step_block == 'output':
+                x = self.proj_decompression(self.norm_decompression(x))
+                db, dc, dh, dw = x.shape
+                x = x.reshape(db * self.pair_size, dc // self.pair_size, h, w)
+
         x_in = x
+
         x = self.norm(x)
         x = self.proj_in(x)
         x = rearrange(x, 'b c h w -> b (h w) c')

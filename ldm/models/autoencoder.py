@@ -1,8 +1,11 @@
+import random
+
 import torch
 import pytorch_lightning as pl
 import torch.nn.functional as F
 from contextlib import contextmanager
 
+import torchvision.transforms
 from taming.modules.vqvae.quantize import VectorQuantizer2 as VectorQuantizer
 
 from ldm.modules.diffusionmodules.model import Encoder, Decoder
@@ -300,6 +303,11 @@ class AutoencoderKL(pl.LightningModule):
         self.encoder = Encoder(**ddconfig)
         self.decoder = Decoder(**ddconfig)
         self.loss = instantiate_from_config(lossconfig)
+        try:
+            self.val_crop_h = lossconfig['params']['val_crop_h']
+            self.val_crop_w = lossconfig['params']['val_crop_w']
+        except:
+            print('Not performing subscape loss computation during val... make sure you arent training autoencoder if you see this behavior.')
         assert ddconfig["double_z"]
         self.quant_conv = torch.nn.Conv2d(2*ddconfig["z_channels"], 2*embed_dim, 1)
         self.post_quant_conv = torch.nn.Conv2d(embed_dim, ddconfig["z_channels"], 1)
@@ -374,6 +382,12 @@ class AutoencoderKL(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         inputs = self.get_input(batch, self.image_key)
         reconstructions, posterior = self(inputs)
+        if (self.val_crop_h != 0) and (self.val_crop_w != 0):
+            # both loss computations are expensive on large images - lets compute loss using a random crop on images and reconstructions
+            rand_h = random.randint(0, inputs.shape[2] - 1 - self.val_crop_h)
+            rand_w = random.randint(0, inputs.shape[3] - 1 - self.val_crop_w)
+            inputs = inputs[:, :, rand_h:rand_h + self.val_crop_h, rand_w:rand_w + self.val_crop_w]
+            reconstructions = reconstructions[:, :, rand_h:rand_h + self.val_crop_h, rand_w:rand_w + self.val_crop_w]
         aeloss, log_dict_ae = self.loss(inputs, reconstructions, posterior, 0, self.global_step,
                                         last_layer=self.get_last_layer(), split="val")
 
